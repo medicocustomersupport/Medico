@@ -382,7 +382,7 @@ body{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Rob
 }
 
 
-/* V13 — advanced booking, service questions, OTP-ready verification and tracking */
+/* V14 — advanced booking, Firebase phone OTP verification and tracking */
 .service-question-box{margin-top:16px;padding:16px;border:1px solid #dbe7f1;border-radius:14px;background:#fbfdff}
 .service-question-box h4{margin:0 0 4px;color:var(--mh-blue-dark);font-size:16px}
 .service-question-box>p{margin:0 0 14px;color:#6d8195;font-size:12px}
@@ -699,14 +699,14 @@ body{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Rob
 <div class="otp-panel" id="otpPanel">
   <div class="otp-top">
     <div><div class="otp-title">📱 Verify mobile number</div><div class="otp-sub">A verified number helps protect bookings and status tracking.</div></div>
-    <span class="booking-id-chip" id="otpBadge">OTP Ready</span>
+    <span class="booking-id-chip" id="otpBadge">Firebase OTP</span>
   </div>
   <div class="otp-controls">
     <button class="btn soft smallbtn" id="sendOtpBtn" type="button">Send OTP</button>
     <input id="otpCode" inputmode="numeric" maxlength="6" placeholder="Enter OTP"/>
     <button class="btn outline smallbtn" id="verifyOtpBtn" type="button">Verify</button>
   </div>
-  <div class="otp-status" id="otpStatus">Real SMS OTP activates after connecting an OTP provider/backend.</div>
+  <div class="otp-status" id="otpStatus">Firebase OTP is built in. Add your Firebase web configuration to activate real SMS verification.</div><div class="otp-sub" style="margin-top:7px">By requesting an OTP, the customer agrees to receive a verification SMS. Standard SMS/data rates may apply.</div>
 </div>
 <div class="service-question-box" id="serviceQuestions">
   <h4>Service-specific information</h4>
@@ -847,7 +847,7 @@ body{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Rob
 <details><summary>Are services available 24 hours?</summary><p>Medico accepts service requests 24×7. Actual visit timing depends on clinical suitability, location and professional availability. This does not replace ambulance or emergency services.</p></details>
 <details><summary>How are healthcare professionals verified?</summary><p>Professional applications are reviewed for identity, qualification/training and, for nurses, applicable nursing-registration credentials before profile activation.</p></details>
 <details><summary>How do I track my booking?</summary><p>After submission, Medico generates a Booking ID. Enter that ID and the registered mobile number in “Track Your Medico Booking”. On this static version, tracking works on the same browser/device; cross-device tracking requires Medico's booking backend.</p></details>
-<details><summary>Is mobile OTP verification active?</summary><p>The website includes an OTP-ready verification flow. Real SMS OTP becomes active after Medico connects a secure OTP provider/backend; GitHub Pages alone cannot securely send or verify SMS OTP.</p></details>
+<details><summary>Is mobile OTP verification active?</summary><p>Firebase Phone Authentication is integrated into the website. Real SMS OTP becomes active after the Firebase web configuration is added, Phone sign-in is enabled, India is allowed in the SMS region policy, and the website domain is authorized.</p></details>
 <details><summary>Can I rate the nurse after my service?</summary><p>Yes. The rating flow is designed for completed nursing services using the booking reference and registered mobile number, with one verified review per completed booking.</p></details>
 <details><summary>How can a nurse or caretaker register?</summary><p>Choose “Nurse / Caretaker” near the top of this page. Complete the professional registration form and upload the required documents. The profile remains pending until Medico admin verification and approval.</p></details>
 <details><summary>Can I cancel or reschedule a confirmed booking?</summary><p>Yes. Free cancellation or rescheduling is generally available when requested at least 4 hours before the confirmed visit. Late cancellations, professional dispatch, specially arranged consumables or a customer no-show may attract charges. See the Cancellation &amp; Refund Policy for details.</p></details>
@@ -924,11 +924,24 @@ body{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Rob
 
 <div class="toast" id="toast"></div>
 <div class="modal" id="modal"><div class="modal-card"><h3>Booking request prepared</h3><p>Your reference number is <b id="ref"></b>.</p><div class="summary" id="summary"></div><p class="small">Send the prepared request to Medico support so the team can review service availability and confirm the next steps.</p><div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn primary" href="#" id="emailBooking">Email Booking Request</a><button class="btn outline" id="copy">Copy Booking Details</button><button class="btn outline modal-track-btn" id="trackCreatedBooking" type="button">Track Booking</button><button class="btn outline" id="close">Close</button></div></div></div>
+<!-- Firebase Phone Authentication SDK (compat build keeps this single-file website simple) -->
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-auth-compat.js"></script>
 <script>
-/* Optional production OTP endpoints. Set these to secure HTTPS backend endpoints before launch.
-   Expected send body: {mobile}; expected verify body: {mobile, otp}. Any HTTP 2xx response is treated as success. */
-window.MEDICO_OTP_SEND_URL = window.MEDICO_OTP_SEND_URL || '';
-window.MEDICO_OTP_VERIFY_URL = window.MEDICO_OTP_VERIFY_URL || '';
+/*
+  FIREBASE OTP SETUP
+  Replace the placeholder values below with the Web App config copied from:
+  Firebase Console -> Project settings -> Your apps -> Web app -> SDK setup and configuration.
+  These web config values are identifiers, not a service-account private key.
+*/
+window.MEDICO_FIREBASE_CONFIG = window.MEDICO_FIREBASE_CONFIG || {
+  apiKey: "PASTE_FIREBASE_API_KEY",
+  authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
+  projectId: "PASTE_PROJECT_ID",
+  storageBucket: "PASTE_PROJECT_ID.firebasestorage.app",
+  messagingSenderId: "PASTE_MESSAGING_SENDER_ID",
+  appId: "PASTE_FIREBASE_APP_ID"
+};
 
 const S=[
 {name:'Nurse Visit at Home',icon:'👩‍⚕️',label:'Price after assessment',desc:'Professional nursing visit for routine clinical support, monitoring and prescribed procedures.'},
@@ -1025,9 +1038,68 @@ function serviceQuestionPairs(){
 }
 
 let otpVerified=false,otpMobile='';
-const otpEnabled=()=>Boolean(window.MEDICO_OTP_SEND_URL&&window.MEDICO_OTP_VERIFY_URL);
+let firebaseAuth=null,otpConfirmation=null,recaptchaVerifier=null,otpCooldownTimer=null;
+function firebaseConfigReady(){
+  const c=window.MEDICO_FIREBASE_CONFIG||{};
+  const values=[c.apiKey,c.authDomain,c.projectId,c.appId];
+  return values.every(v=>typeof v==='string'&&v.trim()&&!/^PASTE_/i.test(v.trim()));
+}
+function initFirebaseOtp(){
+  if(!firebaseConfigReady()||!window.firebase||!firebase.auth)return false;
+  try{
+    if(!firebase.apps.length)firebase.initializeApp(window.MEDICO_FIREBASE_CONFIG);
+    firebaseAuth=firebase.auth();
+    firebaseAuth.useDeviceLanguage();
+    return true;
+  }catch(e){console.error('Firebase init error',e);return false}
+}
+const otpEnabled=()=>initFirebaseOtp();
 function setOtpStatus(msg,kind=''){const el=document.getElementById('otpStatus');if(!el)return;el.textContent=msg;el.className='otp-status'+(kind?' '+kind:'')}
-function resetOtpIfMobileChanged(){if(f.mobile.value.trim()!==otpMobile){otpVerified=false;document.getElementById('otpBadge').textContent='OTP Ready';setOtpStatus(otpEnabled()?'Enter your number and request an OTP.':'Real SMS OTP activates after connecting an OTP provider/backend.');}}
+function resetRecaptcha(){
+  try{if(recaptchaVerifier)recaptchaVerifier.clear()}catch(e){}
+  recaptchaVerifier=null;
+}
+async function getRecaptchaVerifier(){
+  if(recaptchaVerifier)return recaptchaVerifier;
+  if(!otpEnabled())throw new Error('firebase-not-configured');
+  recaptchaVerifier=new firebase.auth.RecaptchaVerifier('sendOtpBtn',{
+    size:'invisible',
+    'expired-callback':()=>{resetRecaptcha();setOtpStatus('Security verification expired. Please request the OTP again.','warn')}
+  });
+  await recaptchaVerifier.render();
+  return recaptchaVerifier;
+}
+function firebaseOtpErrorMessage(e,stage){
+  const code=(e&&e.code)||'';
+  if(code.includes('invalid-phone-number'))return 'Enter a valid Indian mobile number.';
+  if(code.includes('too-many-requests'))return 'Too many OTP attempts. Please wait and try again later.';
+  if(code.includes('quota-exceeded'))return 'Firebase SMS quota is currently exhausted. Please try again later.';
+  if(code.includes('captcha-check-failed'))return 'Security verification failed. Please request a new OTP.';
+  if(code.includes('network-request-failed'))return 'Network error. Check your internet connection and try again.';
+  if(code.includes('operation-not-allowed'))return 'Phone Authentication is not enabled in Firebase yet.';
+  if(code.includes('invalid-app-credential')||code.includes('unauthorized-domain'))return 'This website domain is not authorized in Firebase Authentication settings.';
+  if(code.includes('billing-not-enabled'))return 'Firebase billing must be enabled before real SMS OTP can be sent.';
+  if(stage==='verify'&&(code.includes('invalid-verification-code')||code.includes('code-expired')))return 'OTP is incorrect or expired. Request a new OTP and try again.';
+  return stage==='send'?'Could not send OTP. Please check Firebase setup and try again.':'OTP verification failed. Please check the code and try again.';
+}
+function startOtpCooldown(seconds=30){
+  const btn=document.getElementById('sendOtpBtn');
+  clearInterval(otpCooldownTimer);
+  let left=seconds;
+  btn.disabled=true;btn.textContent=`Resend in ${left}s`;
+  otpCooldownTimer=setInterval(()=>{
+    left--;
+    if(left<=0){clearInterval(otpCooldownTimer);btn.disabled=false;btn.textContent='Resend OTP'}
+    else btn.textContent=`Resend in ${left}s`;
+  },1000);
+}
+function resetOtpIfMobileChanged(){
+  if(f.mobile.value.trim()!==otpMobile){
+    otpVerified=false;otpConfirmation=null;resetRecaptcha();
+    document.getElementById('otpBadge').textContent=otpEnabled()?'Firebase OTP':'Setup Required';
+    setOtpStatus(otpEnabled()?'Enter your number and request an OTP.':'Firebase OTP code is installed, but your Firebase web configuration still needs to be added.','warn');
+  }
+}
 
 let selected=S[0],step=1,last='';
 const f=document.getElementById('form'),picker=document.getElementById('picker');
@@ -1220,31 +1292,54 @@ document.querySelectorAll('.shift-card').forEach(card=>{
 
 
 f.mobile.addEventListener('input',resetOtpIfMobileChanged);
+if(otpEnabled()){
+  document.getElementById('otpBadge').textContent='Firebase OTP';
+  setOtpStatus('Enter your 10-digit mobile number and tap Send OTP.');
+}else{
+  document.getElementById('otpBadge').textContent='Setup Required';
+  setOtpStatus('Firebase OTP code is installed. Add your Firebase web configuration to activate real SMS verification.','warn');
+}
 document.getElementById('sendOtpBtn').onclick=async()=>{
   const mobile=f.mobile.value.trim();
   if(!/^[6-9]\d{9}$/.test(mobile)){setOtpStatus('Enter a valid 10-digit Indian mobile number first.','err');f.mobile.focus();return}
-  otpMobile=mobile;otpVerified=false;
-  if(!otpEnabled()){setOtpStatus('OTP service is ready in the website, but no SMS backend is connected yet. Booking can continue during setup.','warn');document.getElementById('otpBadge').textContent='Integration Pending';return}
+  otpMobile=mobile;otpVerified=false;otpConfirmation=null;
+  if(!otpEnabled()){setOtpStatus('Firebase OTP is installed but not configured yet. Add the Firebase web config first.','warn');document.getElementById('otpBadge').textContent='Setup Required';return}
   try{
     setOtpStatus('Sending OTP…');
-    const r=await fetch(window.MEDICO_OTP_SEND_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mobile})});
-    if(!r.ok)throw new Error('send failed');
-    setOtpStatus('OTP sent. Enter the 6-digit code received on your mobile.','ok');
+    document.getElementById('otpBadge').textContent='Sending…';
+    const verifier=await getRecaptchaVerifier();
+    otpConfirmation=await firebaseAuth.signInWithPhoneNumber('+91'+mobile,verifier);
+    setOtpStatus('OTP sent by SMS. Enter the 6-digit code received on your mobile.','ok');
     document.getElementById('otpBadge').textContent='OTP Sent';
-  }catch(e){setOtpStatus('Could not send OTP. Please try again or contact support.','err')}
+    document.getElementById('otpCode').focus();
+    startOtpCooldown(30);
+  }catch(e){
+    console.error('OTP send error',e);
+    resetRecaptcha();
+    setOtpStatus(firebaseOtpErrorMessage(e,'send'),'err');
+    document.getElementById('otpBadge').textContent='Try Again';
+    const btn=document.getElementById('sendOtpBtn');btn.disabled=false;btn.textContent='Send OTP';
+  }
 };
 document.getElementById('verifyOtpBtn').onclick=async()=>{
   const mobile=f.mobile.value.trim(),otp=document.getElementById('otpCode').value.trim();
-  if(!otpEnabled()){setOtpStatus('Real OTP verification requires the SMS backend connection.','warn');return}
-  if(!/^\d{4,6}$/.test(otp)){setOtpStatus('Enter the OTP received on your mobile.','err');return}
+  if(!otpEnabled()){setOtpStatus('Add the Firebase web configuration before verifying OTP.','warn');return}
+  if(!otpConfirmation||otpMobile!==mobile){setOtpStatus('Request an OTP for this mobile number first.','warn');return}
+  if(!/^\d{6}$/.test(otp)){setOtpStatus('Enter the 6-digit OTP received on your mobile.','err');return}
   try{
     setOtpStatus('Verifying OTP…');
-    const r=await fetch(window.MEDICO_OTP_VERIFY_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mobile,otp})});
-    if(!r.ok)throw new Error('verify failed');
+    const result=await otpConfirmation.confirm(otp);
+    if(!result||!result.user)throw new Error('verification-failed');
     otpVerified=true;otpMobile=mobile;
     setOtpStatus('Mobile number verified successfully.','ok');
     document.getElementById('otpBadge').textContent='✓ Verified';
-  }catch(e){otpVerified=false;setOtpStatus('OTP verification failed. Please check the code and try again.','err')}
+    document.getElementById('verifyOtpBtn').disabled=true;
+    document.getElementById('otpCode').readOnly=true;
+  }catch(e){
+    console.error('OTP verify error',e);
+    otpVerified=false;
+    setOtpStatus(firebaseOtpErrorMessage(e,'verify'),'err');
+  }
 };
 
 function toast(m){const e=document.getElementById('toast');e.textContent=m;e.style.display='block';setTimeout(()=>e.style.display='none',2800)}
@@ -1272,7 +1367,7 @@ document.getElementById('refreshAddressPreview').onclick=updateAddressPreview;
 const d=new Date();f.date.min=d.toISOString().slice(0,10);
 function vals(){return Object.fromEntries(new FormData(f).entries())}
 function addr(x){return [x.address1,x.area,x.landmark,x.city,x.state,x.pin].filter(Boolean).join(', ')}
-function review(){const x=vals(),sq=serviceQuestionPairs(),rows=[['Service',selected.name],...(x.duration?[['Care duration',x.duration]]:[]),['Price',selectedPrice()],['Customer',`${x.customer} • ${x.mobile}`],['Mobile verification',otpEnabled()?(otpVerified?'Verified':'Not verified'):'OTP integration pending'],['Patient',`${x.patient}, ${x.age} yrs${x.gender?' • '+x.gender:''}`],...sq,['Requirement',x.notes],['Address',addr(x)],['Preferred slot',`${x.date} • ${x.time}`],['Payment preference',x.payment||'UPI'],['Coordinates',x.lat?`${x.lat}, ${x.lng}`:'Not captured']];document.getElementById('review').innerHTML=rows.map(r=>`<div class="row"><span>${escapeHtml(r[0])}</span><b>${escapeHtml(r[1]||'—')}</b></div>`).join('')}
+function review(){const x=vals(),sq=serviceQuestionPairs(),rows=[['Service',selected.name],...(x.duration?[['Care duration',x.duration]]:[]),['Price',selectedPrice()],['Customer',`${x.customer} • ${x.mobile}`],['Mobile verification',otpEnabled()?(otpVerified?'Verified':'Not verified'):'Firebase OTP setup pending'],['Patient',`${x.patient}, ${x.age} yrs${x.gender?' • '+x.gender:''}`],...sq,['Requirement',x.notes],['Address',addr(x)],['Preferred slot',`${x.date} • ${x.time}`],['Payment preference',x.payment||'UPI'],['Coordinates',x.lat?`${x.lat}, ${x.lng}`:'Not captured']];document.getElementById('review').innerHTML=rows.map(r=>`<div class="row"><span>${escapeHtml(r[0])}</span><b>${escapeHtml(r[1]||'—')}</b></div>`).join('')}
 
 function makeBookingId(){
   const dt=new Date(),ymd=dt.getFullYear()+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
@@ -1319,7 +1414,7 @@ Service: ${selected.name}
 ${x.duration?'Care duration: '+x.duration+'\n':''}Price: ${selectedPrice()}
 Customer: ${x.customer}
 Mobile: ${x.mobile}
-Mobile verification: ${otpEnabled()?(otpVerified?'Verified':'Not verified'):'OTP integration pending'}
+Mobile verification: ${otpEnabled()?(otpVerified?'Verified':'Not verified'):'Firebase OTP setup pending'}
 Patient: ${x.patient}, ${x.age} years${x.gender?', '+x.gender:''}
 Relation: ${x.relation}${sqText}
 Requirement: ${x.notes}
